@@ -1,0 +1,465 @@
+---
+title: "Big Pharma Product Prediction"
+author: "Nii Amoo Decardi-Nelson"
+date: "`r Sys.Date()`"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load required libraries
+
+```{r,message=FALSE,warning=FALSE}
+library(tidyverse)
+library(tidymodels)
+library(timetk)
+library(modeltime)
+library(modeltime.ensemble)
+```
+
+## Read data
+
+```{r, message=FALSE,warning=FALSE}
+sales_demand <- readxl::read_xlsx('pharmaceutical-sales-demand.xlsx') %>% 
+    janitor::clean_names() %>% 
+    mutate(date       = lubridate::ymd(date))
+    
+
+sales_demand %>%
+    head()
+```
+
+
+## Description
+Big Pharma is a large pharmaceutical distribution company in Germany. They restock their warehouses `monthly` but have been running into issues with overstocking and under-stocking products. You were employed as a data scientist to help find a solution to this problem. The sales team has provided you with data to get started on implementing your solution.
+
+The data required for this is in the accompanying attachment data.zip.
+**Metadata**
+1.	Date: The date a product was purchased
+2.	Product ID: The ID for the product
+3.	Stock Demand: The quantity of product purchased (unit is in boxes)
+
+**Task**
+The data provided includes product demand from October 2020 to October 2021. Your task is to forecast the quantity of products the company should purchase for their warehouses in the coming month. 
+
+You would be required to answer the following questions:
+1.	What evaluation metric would you recommend for your model and why?
+2.	How would you build a machine learning pipeline for your model?
+3.	How would you measure the impact your model has on the company’s operations?
+
+NB: Be free to make your own reasonable assumptions. Please state any assumptions that you make.
+
+
+```{r}
+# Get basic summary of the data
+sales_demand %>% summary()
+
+
+# Why do we have a demand value of -12226? If stock demand is the number of boxes of the product that was purchased then it cannot be negative.
+
+sales_demand %>% 
+    slice(which.min(sales_demand$stock_demand))
+
+# The product in question is C9ID3
+
+
+# Let's see if there are more negative demand values
+
+sales_demand %>% filter(stock_demand < 0)
+
+# There are quite a number of records (6,808) with stock demand below 0
+
+# How many instances are there with 0 stock demand?
+
+sales_demand %>% filter(stock_demand == 0)
+
+# There are quite a number of records (1,322) with stock demand below 0
+
+```
+
+**Assumption:**
+* Negative stock demand represents shortage. ie. Customers requested the said number of boxes of the product, but there were out of stock.    
+* Zero stock demand represents no demand for the product for that day.
+
+In order to accurately forecast the shortages(negative `stock_demand`), I'll convert them to positive values and model them as real demand values. This will ensure stock in the warehouse meets customer demands.
+
+```{r}
+# convert negative values to positive
+sales_demand_clean <- sales_demand %>% 
+    mutate(stock_demand = abs(stock_demand))
+
+sales_demand_clean %>% summary()
+```
+
+
+```{r}
+# Group by product and summarize by time
+monthly_sales_demand <- sales_demand_clean %>%
+    group_by(product_id) %>%
+    summarise_by_time(
+        .date_var = date,
+        .by = 'month',
+        stock_demand = first(stock_demand) # obervations are assigned to the first day of the month
+    ) 
+
+monthly_sales_demand
+```
+
+How many distinct products we have
+```{r}
+prod_demand <- monthly_sales_demand %>% 
+    group_by(product_id) %>% 
+    summarise(count = n(),
+              total_demand = sum(stock_demand)) %>% 
+    arrange(desc(total_demand)) %>% 
+    mutate(row_num = row_number())
+
+
+# Top products
+top_12 <-  prod_demand %>% 
+    select(product_id) %>% 
+    head(12) %>% pull() 
+
+top_30 <-  prod_demand %>% 
+    select(product_id) %>% 
+    head(30) %>% pull() 
+```
+
+
+
+### Plot time series
+Daily Time series of products with the highest demand
+```{r}
+sales_demand_clean %>%
+    group_by(product_id) %>% 
+    filter(product_id %in% top_12) %>% 
+    plot_time_series(date,stock_demand,.facet_ncol = 3,.smooth = FALSE)
+
+
+sales_demand_clean_tbl <- sales_demand_clean %>%
+    group_by(product_id) %>% 
+    left_join(prod_demand %>% select(product_id,row_num),by = 'product_id')
+
+sales_demand_clean_tbl %>% 
+    filter(product_id %in% top_12) %>%
+    arrange(row_num,date) %>% ungroup() %>% 
+    mutate(product_id = product_id %>% fct_reorder(row_num) ,
+           value = product_id %>% fct_reorder(row_num) %>% as.numeric()
+           ) %>% 
+    plot_time_series(.date_var = date,
+                     .value = log1p(stock_demand), # log transform
+                     #.color_var = product_id,
+                     .facet_vars = product_id,
+                     .smooth = FALSE,
+                     .facet_ncol = 3,
+                     .facet_scales = 'fixed',
+                     .title = 'Time Series Plot: Most in-demand products')
+```
+
+
+### Visualise data
+```{r}
+monthly_sales_demand %>% 
+    left_join(prod_demand %>% select(product_id,row_num),by = 'product_id') %>% 
+    filter(product_id %in% top_12) %>% 
+    arrange(row_num,date) %>% ungroup() %>% 
+    mutate(product_id = product_id %>% fct_reorder(row_num) ,
+           value = product_id %>% fct_reorder(row_num) %>% as.numeric()
+           ) %>%  plot_time_series(.date_var = date,
+                     .value = stock_demand,
+                     #.color_var = product_id,
+                     .facet_vars = product_id,
+                     .smooth = FALSE,
+                     .facet_ncol = 3,
+                     .facet_scales = 'fixed',
+                     .title = 'Time Series Plot: Most in-demand products')
+
+
+# %>% 
+#     ggplot(aes(x= date, y = stock_demand,color = product_id)) +
+#     geom_point() + 
+#     geom_line() +
+#     facet_wrap(~ product_id)
+    
+    
+
+
+```
+
+
+# 
+```{r}
+# Products with low demand
+low <- sales_demand_clean_tbl %>% group_by(product_id) %>% 
+    summarise(total = sum(stock_demand),
+              count = n()) %>% arrange(desc(count),total) %>% 
+    filter(count < 90) %>% pull(product_id)
+
+    
+# Will work with the top 12 products with the most demand
+# work with the log of stock demand 
+nested_sales_demand <- sales_demand_clean_tbl %>%
+    mutate(stock_demand = log1p(stock_demand)) %>% 
+    select(-row_num) %>% 
+    #filter(!(product_id %in% low)) %>% 
+    filter(product_id %in% top_30) %>% 
+    extend_timeseries(.id_var = product_id,
+                      .date_var = date,
+                      .length_future = 30
+                      ) %>% 
+    nest_timeseries(.id_var = product_id,
+                    .length_future = 30
+                    ) %>% 
+    split_nested_timeseries(.length_test = 30)
+
+
+```
+
+
+```{r}
+
+# MODELING ----
+
+# * XGBoost Recipe ----
+
+rec_xgb <- recipe(stock_demand ~ date, extract_nested_train_split(nested_sales_demand)) %>%
+    step_timeseries_signature(date) %>%
+    step_rm(date) %>%
+    step_zv(all_predictors()) %>%
+    step_dummy(all_nominal_predictors(), one_hot = TRUE)
+
+rec_xgb2 <- recipe(stock_demand ~ date, extract_nested_train_split(nested_sales_demand)) %>%
+    step_timeseries_signature(date) %>%
+    step_zv(all_predictors()) %>%
+    step_dummy(all_nominal_predictors(), one_hot = TRUE)
+
+bake(prep(rec_xgb), extract_nested_train_split(nested_sales_demand))
+
+# * XGBoost Models ----
+
+wflw_xgb_1 <- workflow() %>%
+    add_model(boost_tree("regression", learn_rate = 0.35) %>% set_engine("xgboost")) %>%
+    add_recipe(rec_xgb)
+
+wflw_xgb_2 <- workflow() %>%
+    add_model(boost_tree("regression", learn_rate = 0.50) %>% set_engine("xgboost")) %>%
+    add_recipe(rec_xgb)
+
+wflw_arima_boost <- workflow() %>%
+    add_model(arima_boost('regression') %>% 
+                  set_engine("auto_arima_xgboost")) %>%
+    add_recipe(rec_xgb2)
+
+wflw_prophet_boost <- workflow() %>%
+    add_model(prophet_boost('regression') %>% 
+                  set_engine("prophet_xgboost")) %>%
+    add_recipe(rec_xgb2)
+
+
+# * BONUS 1: New Algorithm: Temporal Hierachical Forecasting (THIEF) ----
+
+wflw_thief <- workflow() %>%
+    add_model(temporal_hierarchy() %>% set_engine("thief")) %>%
+    add_recipe(recipe(stock_demand ~ date, extract_nested_train_split(nested_sales_demand)))
+
+# 1.0 TRY 1 TIME SERIES ----
+#   - Tells us if our models work at least once (before we scale)
+
+try_sample_tbl <- nested_sales_demand %>%
+    slice(1) %>%
+    modeltime_nested_fit(
+
+        model_list = list(
+            wflw_xgb_1,
+            wflw_xgb_2,
+            wflw_arima_boost,
+            wflw_prophet_boost,
+            wflw_thief
+        ),
+
+        control = control_nested_fit(
+            verbose   = TRUE,
+            allow_par = FALSE
+        )
+    )
+
+try_sample_tbl
+
+# * Check Errors ----
+
+try_sample_tbl %>% extract_nested_error_report()
+
+
+# 2.0 SCALE ----
+#  - LONG RUNNING SCRIPT (2-4 MIN)
+
+parallel_start(6)
+
+nested_modeltime_tbl <- nested_sales_demand %>%
+    # slice_tail(n = 6) %>%
+    modeltime_nested_fit(
+
+        model_list = list(
+            wflw_xgb_1,
+            wflw_xgb_2,
+            wflw_arima_boost,
+            wflw_prophet_boost,
+            wflw_thief
+        ),
+
+        control = control_nested_fit(
+            verbose   = TRUE,
+            allow_par = TRUE
+        )
+    )
+
+nested_modeltime_tbl
+```
+
+```{r}
+# * Review Any Errors ----
+nested_modeltime_tbl %>% extract_nested_error_report()
+
+nested_modeltime_tbl %>%
+    filter(product_id == "1TI2C") %>%
+    extract_nested_train_split()
+
+# * Review Test Accuracy ----
+nested_modeltime_tbl %>%
+    extract_nested_test_accuracy() %>%
+    table_modeltime_accuracy()
+
+# * Visualize Test Forecast ----
+nested_modeltime_tbl %>%
+    extract_nested_test_forecast() %>%
+    filter(product_id == "H0N7") %>%
+    group_by(product_id) %>%
+    plot_modeltime_forecast(.facet_ncol = 3)
+
+# * Capture Results:
+#   - Deal with small time series (<=90 days)
+# ids_small_timeseries <- "0142R"
+# 
+# nested_modeltime_subset_tbl <- nested_modeltime_tbl %>%
+#     filter(!item_id %in% ids_small_timeseries)
+
+# 3.0 SELECT BEST ----
+
+nested_best_tbl <- nested_modeltime_tbl %>%
+    modeltime_nested_select_best(metric = "rmse")
+
+# * Visualize Best Models ----
+nested_best_tbl %>%
+    extract_nested_test_forecast() %>%
+    filter(product_id %in% top_12) %>%
+    group_by(product_id) %>%
+    plot_modeltime_forecast(.facet_ncol = 3)
+
+
+# 4.0 REFIT ----
+#  - Long Running Script: 25 sec
+
+nested_best_refit_tbl <- nested_best_tbl %>%
+    modeltime_nested_refit(
+        control = control_refit(
+            verbose   = TRUE,
+            allow_par = TRUE
+        )
+    )
+
+# FILES REMOVED: Too large
+# nested_best_refit_tbl %>% write_rds("artifacts/nested_best_refit_tbl.rds")
+# nested_best_refit_tbl <- read_rds("artifacts/nested_best_refit_tbl.rds")
+
+# * Review Any Errors ----
+nested_best_refit_tbl %>% extract_nested_error_report()
+
+# * Visualize Future Forecast ----
+nested_best_refit_tbl %>%
+    extract_nested_future_forecast() %>%
+    filter(product_id == 'E3M0O') %>%
+    group_by(product_id) %>%
+    plot_modeltime_forecast(.facet_ncol = 3)
+
+# 5.0 HANDLE ERRORS (SMALL TIME SERIES) ----
+
+# * Nested Time Series ----
+nested_data_small_ts_tbl <-  sales_demand_clean_tbl %>%
+    mutate(stock_demand = log1p(stock_demand)) %>%
+    filter(product_id %in% top_30) %>%
+    group_by(product_id) %>%
+    extend_timeseries(.id_var = product_id, .date_var = date, .length_future = 30) %>%
+    nest_timeseries(.id_var = product_id, .length_future = 30) %>%
+    split_nested_timeseries(.length_test = 30)
+
+# * Fit, Select Best, & Refit ----
+nested_best_refit_small_ts_tbl <- nested_data_small_ts_tbl %>%
+    modeltime_nested_fit(
+
+        model_list = list(
+            wflw_xgb_1,
+            wflw_xgb_2,
+            wflw_arima_boost,
+            wflw_prophet_boost,
+            wflw_thief
+        ),
+
+        control = control_nested_fit(
+            verbose   = TRUE,
+            allow_par = TRUE
+        )
+    ) %>%
+    modeltime_nested_select_best() %>%
+    modeltime_nested_refit()
+```
+
+```{r}
+ nested_best_refit_small_ts_tbl %>%
+    extract_nested_future_forecast() %>%
+    filter(product_id %in% top_12) %>%
+    group_by(product_id) %>% mutate(.value = expm1(.value)) %>% 
+    plot_modeltime_forecast(.facet_ncol = 3)
+
+# * Recombine ----
+
+nested_best_refit_all_tbl <- nested_best_refit_tbl %>% 
+    bind_rows(nested_best_refit_small_ts_tbl)
+
+nested_best_refit_all_tbl %>% write_rds("artifacts/best_models_tbl.rds")
+
+# BONUS 2: NEW WORKFLOW ----
+#   - New Function: modeltime_nested_forecast()
+#   - Used to make changes to your future forecast
+
+parallel_stop()
+
+parallel_start(6)
+new_forecast_tbl <- nested_best_refit_all_tbl %>%
+    modeltime_nested_forecast(
+        h = 30,
+        conf_interval = 0.99,
+        control = control_nested_forecast(
+            verbose   = TRUE,
+            allow_par = FALSE
+        )
+    )
+
+new_forecast_tbl %>%
+    filter(product_id %in% top_12, product_id != '1TI2C') %>% 
+    group_by(product_id) %>%
+    mutate(.value = expm1(.value)) %>% 
+    plot_modeltime_forecast(.facet_ncol = 3)
+
+new_forecast_tbl %>%
+    filter(product_id %in% top_12, product_id != '1TI2C') %>% 
+    mutate(.value = expm1(.value)) %>% 
+    group_by(product_id) %>%
+    plot_modeltime_forecast(.facet_ncol = 3)
+
+# BONUS 3: SHINY APP ----
+```
+

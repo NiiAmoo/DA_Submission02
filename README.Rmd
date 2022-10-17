@@ -1,0 +1,194 @@
+---
+title: "Big Pharma Product Forecast"
+author: "Nii Amoo Decardi-Nelson"
+date: "`r Sys.Date()`"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+
+library(tidyverse)
+library(timetk)
+library(modeltime)
+```
+
+The goal of this project is to forecast product demand for Big Pharma, a large pharmaceutical distribution company in Germany. 
+
+**The Business Problem**
+
+Big Pharma restock their warehouses monthly, but often run into issues with:
+
+1. Overstocking - having too much of a product available without corresponding consumer demand.
+2. Understocking - having too little products avaialbe to meet consumer demands.
+
+**Tasks**
+
+The goal is to offer Big Pharma a solution to their problem. The proposed solution is a time series forecast of their product demand. we begin with a pilot test to forecast the quantity of products the company should purchase for their warehouses in the coming month. 
+
+**Data**
+Contains product demand data from October 2020 to July 2021 with the following fields:
+
+1.	Date: The date a product was purchased
+2.	Product ID: The ID for the product
+3.	Stock Demand: The quantity of product purchased (unit is in boxes)
+
+Below is a summary of the data.
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE}
+
+sales_demand <- readxl::read_xlsx('pharmaceutical-sales-demand.xlsx') %>% 
+    janitor::clean_names() %>% 
+    mutate(date = lubridate::ymd(date),
+           product_id = as_factor(product_id))
+
+sales_demand %>% summary()
+
+# convert negative values to positive
+sales_demand_clean <- sales_demand %>% 
+    mutate(stock_demand = abs(stock_demand))
+
+# Group by product and summarize by time
+monthly_sales_demand <- sales_demand_clean %>%
+    group_by(product_id) %>%
+    summarise_by_time(
+        .date_var = date,
+        .by = 'month',
+        stock_demand = first(stock_demand) # obervations are assigned to the first day of the month
+    ) 
+
+
+# Get unique products
+prod_demand <- monthly_sales_demand %>% 
+    group_by(product_id) %>% 
+    summarise(count = n(),
+              total_demand = sum(stock_demand)) %>% 
+    arrange(desc(total_demand)) %>% 
+    mutate(row_num = row_number())
+
+
+# Top products
+top_12 <-  prod_demand %>% 
+    select(product_id) %>% 
+    head(12) %>% pull() 
+
+top_30 <-  prod_demand %>% 
+    select(product_id) %>% 
+    head(30) %>% pull() 
+
+
+sales_demand_clean_tbl <- sales_demand_clean %>%
+    group_by(product_id) %>% 
+    left_join(prod_demand %>% select(product_id,row_num),by = 'product_id')
+
+demand_plot_raw <- sales_demand_clean_tbl %>% 
+    filter(product_id %in% top_12) %>%
+    arrange(row_num,date) %>% ungroup() %>% 
+    mutate(product_id = product_id %>% fct_reorder(row_num) ,
+           value = product_id %>% fct_reorder(row_num) %>% as.numeric()
+           ) %>% 
+    plot_time_series(.date_var = date,
+                     .value = stock_demand,
+                     #.color_var = product_id,
+                     .facet_vars = product_id,
+                     .smooth = FALSE,
+                     .facet_ncol = 3,
+                     .facet_scales = 'fixed',
+                     .title = 'Time Series Plot: Most in-demand products')
+
+demand_plot_log <- sales_demand_clean_tbl %>% 
+    filter(product_id %in% top_12) %>%
+    arrange(row_num,date) %>% ungroup() %>% 
+    mutate(product_id = product_id %>% fct_reorder(row_num) ,
+           value = product_id %>% fct_reorder(row_num) %>% as.numeric()
+           ) %>% 
+    plot_time_series(.date_var = date,
+                     .value = log1p(stock_demand), # log transform
+                     #.color_var = product_id,
+                     .facet_vars = product_id,
+                     .smooth = FALSE,
+                     .facet_ncol = 3,
+                     .facet_scales = 'fixed',
+                     .title = 'Time Series Plot: Most in-demand products'
+                     )
+```
+
+
+
+### Analysis & Modeling
+We have a demand value of `-12226`. However, since stock demand is the number of boxes of the product that was purchased (according to our meta data dictionary) then it should not be negative.
+
+Turns out there are quite a number of records (`6,808`) with stock demand below `0`. To handle this, we make the following assumptions.
+
+**Assumption:**
+
+* Negative stock demand represents shortage. ie. Customers requested the said number of boxes of the product, but they were out of stock.    
+* Zero stock demand represents no demand for the product for that day.
+
+In order to accurately forecast the shortages(negative `stock_demand`), I converted them to positive values and model them as real demand values. This will ensure stock in the warehouse meets customer demands.
+
+Next, there are over 7000 unique products available for analysis and forecasting. For this test case,
+
+* Products for this exercise are restricted to the top 30 products based on `stock_demand`.
+
+This allowed me to focus on the most important products and quickly iterate to generate a working solution.
+
+```{r, echo=FALSE,message=FALSE,warning=FALSE,fig.width=10,fig.height=9}
+demand_plot_log
+```
+
+
+Plot below shows the time series plot for the products with the highest demand over the period under consideration, the y-axis records the logged values of the `stock_demand`. This makes it easier to identify seasonal patterns and reduces the variance of the observations which makes it ideal for modelling. Below is a seasonal decomposition of the time series plot for one product.
+
+
+```{r,echo=FALSE,message=FALSE,warning=FALSE,fig.width=10,fig.height=9}
+sales_demand_clean_tbl %>% 
+    filter(product_id %in% top_12[2]) %>%
+    arrange(row_num,date) %>% ungroup() %>% 
+    mutate(product_id = product_id %>% fct_reorder(row_num) ,
+           value = product_id %>% fct_reorder(row_num) %>% as.numeric()
+           ) %>% plot_seasonal_diagnostics(
+               .date_var = date,
+                     .value = log1p(stock_demand), # log transform
+                     #.color_var = product_id,
+                     #.facet_vars = product_id,
+                     .title = 'H0N7 - Seasonal Decomposition',
+                     .feature_set = c('wday.lbl','month.lbl','quarter')
+               )
+```
+
+The plot above helps us identify time components we can include in our model to capture potential seasonal occurrences. It's clear demand is higher during weekdays. On a monthly scale, July seems to have the least stock demand. 
+
+
+
+Three models were developed for the problem and configured so that the most suitable model will be chosen for each individual product. 
+
+**Questions**
+
+1.	What evaluation metric would you recommend for your model and why?
+Model performance was assessed using the root mean squared error (RMSE) metric, an scaled version of the mean squared error which gives indication of how far our prediction was from the actual.The RMSE is chosen because it penalizes larger variances between the actual and predicted values. Thus, large deviations from the actual in either direction are penalized which simulates the financial impact of getting predictions wrong. A lower RMSE score is better, hence for each product, the model with the lowest RMSE is selected to be used for the forecast. The RMSE number is in the same unit as the projected value, this is an advantage of this metric in comparison to the others. This makes it easier to comprehend.
+
+A table with other metrics that can be used to evaluate each models performance for each product is included in the final solution for completeness and transparency.
+
+2.	How would you build a machine learning pipeline for your model?
+An end-to-end pipeline, from data acquisition and cleaning to modelling, training and deployment will follow almost the same workflow used here. Additional steps would include testing and version controlling.
+
+3.	How would you measure the impact your model has on the company’s operations?
+Impact of this model on the company operations could be measured by:
+
+a. Monetary value of excess stock at the end of the month. In the case where the model over estimates customer demand.
+b. Monetary value for product demand over available stock. In the case of underestimation resulting in product shortages, this will represent missed revenue opportunities and ideally cases of this nature should be rare. 
+
+These two business metrics will serve as good barometers for how well the solution is performing and whether or not it requires further adjustment.
+
+
+### Deployment
+The solution, a time series forecast 30 days into the future, is deployed on shinyapps.io and can be accessed [here](https://nii-amoo.shinyapps.io/Big_Pharma_Product_Forecast/?_ga=2.30230655.1728434036.1665487901-2124963698.1665487901).
+
+
