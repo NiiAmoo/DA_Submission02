@@ -1,11 +1,4 @@
 
-<!-- README.md is generated from README.Rmd. Please edit that file -->
-
-# Big Pharma Product Forecast
-
-<!-- badges: start -->
-<!-- badges: end -->
-
 The goal of this project is to forecast product demand for Big Pharma, a
 large pharmaceutical distribution company in Germany.
 
@@ -16,8 +9,8 @@ with:
 
 1.  Overstocking - having too much of a product available without
     corresponding consumer demand.
-2.  Understocking - having too little products avaialbe to meet consumer
-    demands.
+2.  Understocking - having too little products available to meet
+    consumer demands.
 
 **Tasks**
 
@@ -74,17 +67,68 @@ This allowed me to focus on the most important products and quickly
 iterate to generate a working solution.
 
 ![](README_files/figure-gfm/unnamed-chunk-3-1.png)<!-- -->
+
+Plot below shows the time series plot for the products with the highest
+demand over the period under consideration, the y-axis records the
+logged values of the `stock_demand`. This makes it easier to identify
+seasonal patterns and reduces the variance of the observations which
+makes it ideal for modelling. Below is a seasonal decomposition of the
+time series plot for one product.
+
 ![](README_files/figure-gfm/unnamed-chunk-4-1.png)<!-- -->
 
-You’ll still need to render `README.Rmd` regularly, to keep `README.md`
-up-to-date. `devtools::build_readme()` is handy for this. You could also
-use GitHub Actions to re-render `README.Rmd` every time you push. An
-example workflow can be found here:
-<https://github.com/r-lib/actions/tree/v1/examples>.
+The plot above helps us identify time components we can include in our
+model to capture potential seasonal occurrences. It’s clear demand is
+higher during weekdays. On a monthly scale, July seems to have the least
+stock demand.
 
-You can also embed plots, for example:
+Three models were developed for the problem and configured so that the
+most suitable model will be chosen for each individual product.
 
-![](README_files/figure-gfm/pressure-1.png)<!-- -->
+**Questions**
 
-In that case, don’t forget to commit and push the resulting figure
-files, so they display on GitHub.
+1.  What evaluation metric would you recommend for your model and why?
+    Model performance was assessed using the root mean squared error
+    (RMSE) metric, an scaled version of the mean squared error which
+    gives indication of how far our prediction was from the actual.The
+    RMSE is chosen because it penalizes larger variances between the
+    actual and predicted values. Thus, large deviations from the actual
+    in either direction are penalized which simulates the financial
+    impact of getting predictions wrong. A lower RMSE score is better,
+    hence for each product, the model with the lowest RMSE is selected
+    to be used for the forecast. The RMSE number is in the same unit as
+    the projected value, this is an advantage of this metric in
+    comparison to the others. This makes it easier to comprehend.
+
+A table with other metrics that can be used to evaluate each models
+performance for each product is included in the final solution for
+completeness and transparency.
+
+2.  How would you build a machine learning pipeline for your model? An
+    end-to-end pipeline, from data acquisition and cleaning to
+    modelling, training and deployment will follow almost the same
+    workflow used here. Additional steps would include testing and
+    version controlling.
+
+3.  How would you measure the impact your model has on the company’s
+    operations? Impact of this model on the company operations could be
+    measured by:
+
+<!-- -->
+
+1.  Monetary value of excess stock at the end of the month. In the case
+    where the model over estimates customer demand.
+2.  Monetary value for product demand over available stock. In the case
+    of underestimation resulting in product shortages, this will
+    represent missed revenue opportunities and ideally cases of this
+    nature should be rare.
+
+These two business metrics will serve as good barometers for how well
+the solution is performing and whether or not it requires further
+adjustment.
+
+### Deployment
+
+The solution, a time series forecast 30 days into the future, is
+deployed on shinyapps.io and can be accessed
+[here](https://nii-amoo.shinyapps.io/Big_Pharma_Product_Forecast/?_ga=2.30230655.1728434036.1665487901-2124963698.1665487901).

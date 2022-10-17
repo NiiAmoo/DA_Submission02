@@ -1,10 +1,5 @@
 ---
-title: "Big Pharma Product Forecast"
-author: "Nii Amoo Decardi-Nelson"
-date: "`r Sys.Date()`"
-output: html_document
-editor_options: 
-  chunk_output_type: console
+output: github_document
 ---
 
 
@@ -13,6 +8,8 @@ knitr::opts_chunk$set(
   collapse = TRUE,
   comment = "#>"
 )
+
+
 
 library(tidyverse)
 library(timetk)
@@ -26,7 +23,7 @@ The goal of this project is to forecast product demand for Big Pharma, a large p
 Big Pharma restock their warehouses monthly, but often run into issues with:
 
 1. Overstocking - having too much of a product available without corresponding consumer demand.
-2. Understocking - having too little products avaialbe to meet consumer demands.
+2. Understocking - having too little products available to meet consumer demands.
 
 **Tasks**
 
@@ -97,6 +94,7 @@ demand_plot_raw <- sales_demand_clean_tbl %>%
                      .value = stock_demand,
                      #.color_var = product_id,
                      .facet_vars = product_id,
+                      .interactive = FALSE,
                      .smooth = FALSE,
                      .facet_ncol = 3,
                      .facet_scales = 'fixed',
@@ -112,6 +110,7 @@ demand_plot_log <- sales_demand_clean_tbl %>%
                      .value = log1p(stock_demand), # log transform
                      #.color_var = product_id,
                      .facet_vars = product_id,
+                      .interactive = FALSE,
                      .smooth = FALSE,
                      .facet_ncol = 3,
                      .facet_scales = 'fixed',
@@ -159,7 +158,8 @@ sales_demand_clean_tbl %>%
                      #.color_var = product_id,
                      #.facet_vars = product_id,
                      .title = 'H0N7 - Seasonal Decomposition',
-                     .feature_set = c('wday.lbl','month.lbl','quarter')
+                     .feature_set = c('wday.lbl','month.lbl','quarter'),
+                     .interactive = FALSE
                )
 ```
 
